@@ -3,6 +3,14 @@
    All credits where due
 */
 
+#define SCREEN_WIDTH 80
+#define SCREEN_HEIGHT 28
+#define SCREEN_CHAR_BYTE 2
+
+#define ENTER_KEY_CODE 0x1C
+#define BACKSPACE_KEY_CODE 0x0E
+#define SYS_INPUT_HINT "-> "
+
 unsigned char keyboard_map[128] =
         {
                 0,  27, '1', '2', '3', '4', '5', '6', '7', '8',	/* 9 */
@@ -65,6 +73,41 @@ char *vidptr = (char*)0xb8000;
 /* current cursor location */
 unsigned int current_loc = 0;
 
+/* vid cache buffer */
+unsigned char vidcache[SCREEN_CHAR_BYTE * SCREEN_WIDTH * SCREEN_HEIGHT];
+unsigned int vidcache_loc = 0;
+
+/* empty the video cache buffer */
+void clear_vidcache() {
+    vidcache[0] = '\0';
+    vidcache_loc = 0;
+}
+
+void push_vidcache(unsigned char c) {
+    vidcache[vidcache_loc++] = c;
+}
+
+unsigned int get_charlen(const char *str) {
+    unsigned int i = 0;
+    while (str[i++] != '\0');
+    return i;
+}
+
+int cmp_str(const char *str) {
+    unsigned int vidcache_len = get_charlen(vidcache);
+    unsigned int str_len = get_charlen(str);
+
+    if (vidcache_len != str_len)
+        return 0;
+
+    for (unsigned int i = 0; i < str_len; ++i) {
+        if (str[i] != vidcache[i])
+            return 0;
+    }
+
+    return 1;
+}
+
 void idt_init(void) {
     unsigned long keyboard_address;
     unsigned long idt_address;
@@ -116,16 +159,36 @@ void kb_init(void) {
     write_port(0x21, 0xfd);
 }
 
-void kprint(const char *str) {
+void kprint_newline(void){
+    current_loc = current_loc + (SCREEN_CHAR_BYTE * SCREEN_WIDTH - current_loc % SCREEN_WIDTH);
+}
+
+void kprint(const char *str, unsigned short attr) {
     unsigned int i = 0;
     while (str[i] != '\0') {
+        push_vidcache(str[i]);
         vidptr[current_loc++] = str[i++];
-        vidptr[current_loc++] = 0x07;
+        vidptr[current_loc++] = attr;
     }
 }
 
-void kprint_newline(void){
-    current_loc = current_loc + (160 - current_loc % 80);
+void kprint_char(const unsigned char str, unsigned short attr) {
+    push_vidcache(str);
+    vidptr[current_loc++] = str;
+    vidptr[current_loc++] = attr;
+}
+
+void kprint_sys(const char *str, unsigned short attr) {
+    unsigned int i = 0;
+    while (str[i] != '\0') {
+        vidptr[current_loc++] = str[i++];
+        vidptr[current_loc++] = attr;
+    }
+}
+
+void kprintln_sys(const char *str, unsigned short attr) {
+    kprint_sys(str, attr);
+    kprint_newline();
 }
 
 /* clar the video buffer ( clear the screen )
@@ -135,9 +198,30 @@ void kprint_newline(void){
      * */
 void clear_screen(void) {
     unsigned int i = 0;
-    while (i < 25 * 80 * 2) {
+    while (i < SCREEN_HEIGHT * SCREEN_WIDTH * SCREEN_CHAR_BYTE) {
         vidptr[i++] = ' ';
         vidptr[i++] = 0x07;
+    }
+    current_loc = 0;
+    clear_vidcache();
+}
+
+void command_handler(void) {
+    push_vidcache('\0');
+    kprint_newline();
+    if (cmp_str("clear")) {
+        clear_screen();
+    } else if (cmp_str("help")) {
+        kprintln_sys("clear: clear the screen.", 0x07);
+        kprintln_sys("help: show all commands.", 0x07);
+    }
+    clear_vidcache();
+}
+
+void kbackspace(void) {
+    if (current_loc % SCREEN_WIDTH >= get_charlen(SYS_INPUT_HINT) * SCREEN_CHAR_BYTE) {
+        vidptr[--current_loc] = 0x07;
+        vidptr[--current_loc] = ' ';
     }
 }
 
@@ -156,22 +240,29 @@ void keyboard_handler_main(void){
         if (keycode < 0)
             return; /* something must goes wrong, abort this. */
 
-        if (keycode == 0x1C) {
-            kprint_newline();
+        if (keycode == ENTER_KEY_CODE) {
+            command_handler();
+            kprint_sys(SYS_INPUT_HINT, 0x02);
             return;
         }
 
-        vidptr[current_loc++] = keyboard_map[(unsigned char) keycode];
-        vidptr[current_loc++] = 0x07;
+        if (keycode == BACKSPACE_KEY_CODE) {
+            kbackspace();
+            return;
+        }
+
+        kprint_char(keyboard_map[(unsigned char) keycode], 0x07);
     }
 }
 
 void kernel_start(void) {
-    const char *str = "soptq's kernel v1";
     clear_screen();
-    kprint(str);
+    kprint_sys("Soptq's micro kernel v1.0", 0x02);
+    kprint_newline();
+    kprint_sys("Comopiled on 7.18.2020", 0x02);
     kprint_newline();
     kprint_newline();
+    kprint_sys(SYS_INPUT_HINT, 0x02);
 
     idt_init();
     kb_init();
