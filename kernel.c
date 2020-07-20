@@ -259,7 +259,7 @@ void kernel_start(void) {
     clear_screen();
     kprint_sys("Soptq's micro kernel v1.0", 0x02);
     kprint_newline();
-    kprint_sys("Comopiled on 7.18.2020", 0x02);
+    kprint_sys("Compiled on 7.18.2020", 0x02);
     kprint_newline();
     kprint_newline();
     kprint_sys(SYS_INPUT_HINT, 0x02);
